@@ -10,10 +10,10 @@
 //! source code for this module, or the [`eventloop`
 //! example](https://github.com/ggez/ggez/blob/master/examples/eventloop.rs).
 
-use winit::{self, dpi};
+use winit::{self, dpi, event_loop::EventLoopWindowTarget};
 
 /// A mouse button.
-pub use winit::event::{MouseButton, ScanCode};
+pub use winit::event::MouseButton;
 
 /// An analog axis of some device (gamepad thumbstick, joystick...).
 #[cfg(feature = "gamepad")]
@@ -25,9 +25,9 @@ pub use gilrs::Button;
 /// `winit` events; nested in a module for re-export neatness.
 pub mod winit_event {
     pub use super::winit::event::{
-        DeviceEvent, ElementState, Event, KeyboardInput, ModifiersState, MouseScrollDelta,
-        TouchPhase, WindowEvent,
+        DeviceEvent, ElementState, Event, KeyEvent, MouseScrollDelta, TouchPhase, WindowEvent,
     };
+    pub use winit::keyboard::ModifiersState;
 }
 use crate::context::ContextFields;
 #[cfg(not(feature = "gamepad"))]
@@ -42,10 +42,9 @@ pub use crate::input::gamepad::GamepadId;
 use crate::input::keyboard::{KeyCode, KeyInput, KeyMods};
 use crate::Context;
 use crate::GameError;
+pub use input::keyboard::ScanCode;
 
-use self::winit_event::{
-    ElementState, Event, KeyboardInput, MouseScrollDelta, TouchPhase, WindowEvent,
-};
+use self::winit_event::{ElementState, Event, MouseScrollDelta, TouchPhase, WindowEvent};
 /// `winit` event loop.
 pub use winit::event_loop::{ControlFlow, EventLoop};
 
@@ -283,7 +282,11 @@ where
 /// It does not try to do any type of framerate limiting.  See the
 /// documentation for the [`timer`](../timer/index.html) module for more info.
 #[allow(clippy::needless_return)] // necessary as the returns used here are actually necessary to break early from the event loop
-pub fn run<S: 'static, C, E>(mut ctx: C, event_loop: EventLoop<()>, mut state: S) -> !
+pub fn run<S: 'static, C, E>(
+    mut ctx: C,
+    event_loop: EventLoop<()>,
+    mut state: S,
+) -> Result<(), winit::error::EventLoopError>
 where
     S: EventHandler<C, E>,
     E: std::fmt::Debug,
@@ -295,7 +298,7 @@ where
         + HasMut<GamepadContext>
         + HasMut<crate::timer::TimeContext>,
 {
-    event_loop.run(move |mut event, _, control_flow| {
+    event_loop.run(move |mut event, window_target| {
         let ctx = &mut ctx;
         let state = &mut state;
 
@@ -309,16 +312,16 @@ where
             HasMut::<ContextFields>::retrieve_mut(ctx).quit_requested = false;
             if let Ok(false) = res {
                 HasMut::<ContextFields>::retrieve_mut(ctx).continuing = false;
-            } else if catch_error(ctx, res, state, control_flow, ErrorOrigin::QuitEvent) {
+            } else if catch_error(ctx, res, state, window_target, ErrorOrigin::QuitEvent) {
                 return;
             }
         }
         if !HasMut::<ContextFields>::retrieve_mut(ctx).continuing {
-            *control_flow = ControlFlow::Exit;
+            window_target.exit();
             return;
         }
 
-        *control_flow = ControlFlow::Poll;
+        window_target.set_control_flow(ControlFlow::Poll);
 
         process_event(ctx, &mut event);
         match event {
@@ -330,7 +333,7 @@ where
                         logical_size.width as f32,
                         logical_size.height as f32,
                     );
-                    if catch_error(ctx, res, state, control_flow, ErrorOrigin::ResizeEvent) {
+                    if catch_error(ctx, res, state, window_target, ErrorOrigin::ResizeEvent) {
                         return;
                     };
                 }
@@ -338,35 +341,38 @@ where
                     let res = state.quit_event(ctx);
                     if let Ok(false) = res {
                         HasMut::<ContextFields>::retrieve_mut(ctx).continuing = false;
-                    } else if catch_error(ctx, res, state, control_flow, ErrorOrigin::QuitEvent) {
+                    } else if catch_error(ctx, res, state, window_target, ErrorOrigin::QuitEvent) {
                         return;
                     }
                 }
                 WindowEvent::Focused(gained) => {
                     let res = state.focus_event(ctx, gained);
-                    if catch_error(ctx, res, state, control_flow, ErrorOrigin::FocusEvent) {
+                    if catch_error(ctx, res, state, window_target, ErrorOrigin::FocusEvent) {
                         return;
                     };
                 }
-                WindowEvent::ReceivedCharacter(ch) => {
-                    let res = state.text_input_event(ctx, ch);
-                    if catch_error(ctx, res, state, control_flow, ErrorOrigin::TextInputEvent) {
-                        return;
-                    };
-                }
+                // WindowEvent::ReceivedCharacter(ch) => {
+                //     let res = state.text_input_event(ctx, ch);
+                //     if catch_error(ctx, res, state, window_target, ErrorOrigin::TextInputEvent) {
+                //         return;
+                //     };
+                // }
                 WindowEvent::ModifiersChanged(mods) => {
                     HasMut::<input::keyboard::KeyboardContext>::retrieve_mut(ctx)
                         .set_modifiers(KeyMods::from(mods))
                 }
                 WindowEvent::KeyboardInput {
-                    input:
-                        KeyboardInput {
-                            state: ElementState::Pressed,
-                            virtual_keycode: keycode,
-                            scancode,
-                            ..
-                        },
+                    event: winit_event::KeyEvent {
+                        state: ElementState::Pressed,
+                        ..
+                    },
                     ..
+                        // KeyboardInput {
+                        //     state: ElementState::Pressed,
+                        //     virtual_keycode: keycode,
+                        //     scancode,
+                        //     ..
+                        // },
                 } => {
                     let active_mods =
                         HasMut::<input::keyboard::KeyboardContext>::retrieve_mut(ctx).active_mods();
@@ -382,7 +388,7 @@ where
                         },
                         repeat,
                     );
-                    if catch_error(ctx, res, state, control_flow, ErrorOrigin::KeyDownEvent) {
+                    if catch_error(ctx, res, state, window_target, ErrorOrigin::KeyDownEvent) {
                         return;
                     };
                 }
@@ -406,7 +412,7 @@ where
                             mods: active_mods,
                         },
                     );
-                    if catch_error(ctx, res, state, control_flow, ErrorOrigin::KeyUpEvent) {
+                    if catch_error(ctx, res, state, window_target, ErrorOrigin::KeyUpEvent) {
                         return;
                     };
                 }
@@ -421,7 +427,7 @@ where
                         }
                     };
                     let res = state.mouse_wheel_event(ctx, x, y);
-                    if catch_error(ctx, res, state, control_flow, ErrorOrigin::MouseWheelEvent) {
+                    if catch_error(ctx, res, state, window_target, ErrorOrigin::MouseWheelEvent) {
                         return;
                     };
                 }
@@ -440,7 +446,7 @@ where
                                 ctx,
                                 res,
                                 state,
-                                control_flow,
+                                window_target,
                                 ErrorOrigin::MouseButtonDownEvent,
                             ) {
                                 return;
@@ -453,7 +459,7 @@ where
                                 ctx,
                                 res,
                                 state,
-                                control_flow,
+                                window_target,
                                 ErrorOrigin::MouseButtonUpEvent,
                             ) {
                                 return;
@@ -468,14 +474,20 @@ where
                         HasMut::<input::mouse::MouseContext>::retrieve_mut(ctx).last_delta();
                     let res =
                         state.mouse_motion_event(ctx, position.x, position.y, delta.x, delta.y);
-                    if catch_error(ctx, res, state, control_flow, ErrorOrigin::MouseMotionEvent) {
+                    if catch_error(
+                        ctx,
+                        res,
+                        state,
+                        window_target,
+                        ErrorOrigin::MouseMotionEvent,
+                    ) {
                         return;
                     };
                 }
                 WindowEvent::Touch(touch) => {
                     let res =
                         state.touch_event(ctx, touch.phase, touch.location.x, touch.location.y);
-                    if catch_error(ctx, res, state, control_flow, ErrorOrigin::TouchEvent) {
+                    if catch_error(ctx, res, state, window_target, ErrorOrigin::TouchEvent) {
                         return;
                     };
                 }
@@ -485,7 +497,7 @@ where
                         ctx,
                         res,
                         state,
-                        control_flow,
+                        window_target,
                         ErrorOrigin::MouseEnterOrLeave,
                     ) {
                         return;
@@ -497,7 +509,7 @@ where
                         ctx,
                         res,
                         state,
-                        control_flow,
+                        window_target,
                         ErrorOrigin::MouseEnterOrLeave,
                     ) {
                         return;
@@ -517,7 +529,7 @@ where
                         ctx,
                         res,
                         state,
-                        control_flow,
+                        window_target,
                         ErrorOrigin::RawMouseMotionEvent,
                     ) {
                         return;
@@ -528,7 +540,7 @@ where
             Event::Suspended => (),
             Event::NewEvents(_) => (),
             Event::UserEvent(_) => (),
-            Event::MainEventsCleared => {
+            Event::AboutToWait => {
                 // If you are writing your own event loop, make sure
                 // you include `timer_context.tick()` and
                 // `ctx.process_event()` calls.  These update ggez's
@@ -548,7 +560,7 @@ where
                                 ctx,
                                 res,
                                 state,
-                                control_flow,
+                                window_target,
                                 ErrorOrigin::GamepadButtonDownEvent,
                             ) {
                                 return;
@@ -560,7 +572,7 @@ where
                                 ctx,
                                 res,
                                 state,
-                                control_flow,
+                                window_target,
                                 ErrorOrigin::GamepadButtonUpEvent,
                             ) {
                                 return;
@@ -572,7 +584,7 @@ where
                                 ctx,
                                 res,
                                 state,
-                                control_flow,
+                                window_target,
                                 ErrorOrigin::GamepadAxisEvent,
                             ) {
                                 return;
@@ -583,21 +595,21 @@ where
                 }
 
                 let res = state.update(ctx);
-                if catch_error(ctx, res, state, control_flow, ErrorOrigin::Update) {
+                if catch_error(ctx, res, state, window_target, ErrorOrigin::Update) {
                     return;
                 };
 
                 if let Err(e) = HasMut::<GraphicsContext>::retrieve_mut(ctx).begin_frame() {
                     error!("Error on GraphicsContext::begin_frame(): {e:?}");
                     eprintln!("Error on GraphicsContext::begin_frame(): {e:?}");
-                    *control_flow = ControlFlow::Exit;
+                    window_target.exit();
                 }
 
                 if let Err(e) = state.draw(ctx) {
                     error!("Error on EventHandler::draw(): {e:?}");
                     eprintln!("Error on EventHandler::draw(): {e:?}");
                     if state.on_error(ctx, ErrorOrigin::Draw, e) {
-                        *control_flow = ControlFlow::Exit;
+                        window_target.exit();
                         return;
                     }
                 }
@@ -605,7 +617,7 @@ where
                 if let Err(e) = HasMut::<GraphicsContext>::retrieve_mut(ctx).end_frame() {
                     error!("Error on GraphicsContext::end_frame(): {e:?}");
                     eprintln!("Error on GraphicsContext::end_frame(): {e:?}");
-                    *control_flow = ControlFlow::Exit;
+                    window_target.exit();
                 }
 
                 // reset the mouse delta for the next frame
@@ -617,9 +629,6 @@ where
                 HasMut::<input::keyboard::KeyboardContext>::retrieve_mut(ctx).save_keyboard_state();
                 HasMut::<input::mouse::MouseContext>::retrieve_mut(ctx).save_mouse_state();
             }
-            Event::RedrawRequested(_) => (),
-            Event::RedrawEventsCleared => (),
-            Event::LoopDestroyed => (),
         }
     })
 }
@@ -628,7 +637,7 @@ fn catch_error<T, C, E, S: 'static>(
     ctx: &mut C,
     event_result: Result<T, E>,
     state: &mut S,
-    control_flow: &mut ControlFlow,
+    window_target: &EventLoopWindowTarget<()>,
     origin: ErrorOrigin,
 ) -> bool
 where
@@ -640,7 +649,7 @@ where
         error!("Error on EventHandler {origin:?}: {e:?}");
         eprintln!("Error on EventHandler {origin:?}: {e:?}");
         if state.on_error(ctx, origin, e) {
-            *control_flow = ControlFlow::Exit;
+            window_target.exit();
             return true;
         }
     }

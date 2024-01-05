@@ -110,10 +110,9 @@
 use crate::context::Context;
 
 use std::collections::HashSet;
-use winit::event::ModifiersState;
-pub use winit::event::ScanCode;
 /// A key code.
-pub use winit::event::VirtualKeyCode as KeyCode;
+pub use winit::keyboard::KeyCode;
+use winit::keyboard::ModifiersState;
 
 bitflags::bitflags! {
     /// Bitflags describing the state of keyboard modifiers, such as `Control` or `Shift`.
@@ -136,16 +135,16 @@ bitflags::bitflags! {
 impl From<ModifiersState> for KeyMods {
     fn from(state: ModifiersState) -> Self {
         let mut keymod = KeyMods::empty();
-        if state.shift() {
+        if state.shift_key() {
             keymod |= Self::SHIFT;
         }
-        if state.ctrl() {
+        if state.control_key() {
             keymod |= Self::CTRL;
         }
-        if state.alt() {
+        if state.alt_key() {
             keymod |= Self::ALT;
         }
-        if state.logo() {
+        if state.super_key() {
             keymod |= Self::LOGO;
         }
         keymod
@@ -157,7 +156,7 @@ impl From<ModifiersState> for KeyMods {
 pub struct KeyInput {
     /// The scancode. For more info on what they are and when to use them refer to the
     /// [`keyboard`](crate::input::keyboard) module.
-    pub scancode: ScanCode,
+    pub scancode: KeyCode,
     /// The keycode corresponding to the scancode, if there is one.
     pub keycode: Option<KeyCode>,
     /// The keyboard modifiers active at the moment of input.
@@ -308,18 +307,22 @@ impl KeyboardContext {
     fn set_key_modifier(&mut self, key: KeyCode, pressed: bool) {
         if pressed {
             match key {
-                KeyCode::LShift | KeyCode::RShift => self.active_modifiers |= KeyMods::SHIFT,
-                KeyCode::LControl | KeyCode::RControl => self.active_modifiers |= KeyMods::CTRL,
-                KeyCode::LAlt | KeyCode::RAlt => self.active_modifiers |= KeyMods::ALT,
-                KeyCode::LWin | KeyCode::RWin => self.active_modifiers |= KeyMods::LOGO,
+                KeyCode::ShiftLeft | KeyCode::ShiftRight => self.active_modifiers |= KeyMods::SHIFT,
+                KeyCode::ControlLeft | KeyCode::ControlRight => {
+                    self.active_modifiers |= KeyMods::CTRL
+                }
+                KeyCode::AltLeft | KeyCode::AltRight => self.active_modifiers |= KeyMods::ALT,
+                KeyCode::SuperLeft | KeyCode::SuperRight => self.active_modifiers |= KeyMods::LOGO,
                 _ => (),
             }
         } else {
             match key {
-                KeyCode::LShift | KeyCode::RShift => self.active_modifiers -= KeyMods::SHIFT,
-                KeyCode::LControl | KeyCode::RControl => self.active_modifiers -= KeyMods::CTRL,
-                KeyCode::LAlt | KeyCode::RAlt => self.active_modifiers -= KeyMods::ALT,
-                KeyCode::LWin | KeyCode::RWin => self.active_modifiers -= KeyMods::LOGO,
+                KeyCode::ShiftLeft | KeyCode::ShiftRight => self.active_modifiers -= KeyMods::SHIFT,
+                KeyCode::ControlLeft | KeyCode::ControlRight => {
+                    self.active_modifiers -= KeyMods::CTRL
+                }
+                KeyCode::AltLeft | KeyCode::AltRight => self.active_modifiers -= KeyMods::ALT,
+                KeyCode::SuperLeft | KeyCode::SuperRight => self.active_modifiers -= KeyMods::LOGO,
                 _ => (),
             }
         }
@@ -387,9 +390,9 @@ mod tests {
 
     #[test]
     fn key_mod_conversions() {
-        let shift = winit::event::ModifiersState::SHIFT;
-        let alt = winit::event::ModifiersState::ALT;
-        let ctrl = winit::event::ModifiersState::CTRL;
+        let shift = winit::keyboard::ModifiersState::SHIFT;
+        let alt = winit::keyboard::ModifiersState::ALT;
+        let ctrl = winit::keyboard::ModifiersState::CONTROL;
 
         assert_eq!(KeyMods::empty(), KeyMods::from(ModifiersState::empty()));
         assert_eq!(KeyMods::SHIFT, KeyMods::from(shift));
@@ -413,48 +416,48 @@ mod tests {
     fn pressed_keys_tracking() {
         let mut keyboard = KeyboardContext::new();
         assert_eq!(keyboard.pressed_keys(), &[].iter().copied().collect());
-        assert!(!keyboard.is_key_pressed(KeyCode::A));
-        keyboard.set_key(KeyCode::A, true);
+        assert!(!keyboard.is_key_pressed(KeyCode::KeyA));
+        keyboard.set_key(KeyCode::KeyA, true);
         assert_eq!(
             keyboard.pressed_keys(),
-            &[KeyCode::A].iter().copied().collect()
+            &[KeyCode::KeyA].iter().copied().collect()
         );
-        assert!(keyboard.is_key_pressed(KeyCode::A));
-        keyboard.set_key(KeyCode::A, false);
+        assert!(keyboard.is_key_pressed(KeyCode::KeyA));
+        keyboard.set_key(KeyCode::KeyA, false);
         assert_eq!(keyboard.pressed_keys(), &[].iter().copied().collect());
-        assert!(!keyboard.is_key_pressed(KeyCode::A));
-        keyboard.set_key(KeyCode::A, true);
+        assert!(!keyboard.is_key_pressed(KeyCode::KeyA));
+        keyboard.set_key(KeyCode::KeyA, true);
         assert_eq!(
             keyboard.pressed_keys(),
-            &[KeyCode::A].iter().copied().collect()
+            &[KeyCode::KeyA].iter().copied().collect()
         );
-        assert!(keyboard.is_key_pressed(KeyCode::A));
-        keyboard.set_key(KeyCode::A, true);
+        assert!(keyboard.is_key_pressed(KeyCode::KeyA));
+        keyboard.set_key(KeyCode::KeyA, true);
         assert_eq!(
             keyboard.pressed_keys(),
-            &[KeyCode::A].iter().copied().collect()
+            &[KeyCode::KeyA].iter().copied().collect()
         );
-        keyboard.set_key(KeyCode::B, true);
+        keyboard.set_key(KeyCode::KeyB, true);
         assert_eq!(
             keyboard.pressed_keys(),
-            &[KeyCode::A, KeyCode::B].iter().copied().collect()
+            &[KeyCode::KeyA, KeyCode::KeyB].iter().copied().collect()
         );
-        keyboard.set_key(KeyCode::B, true);
+        keyboard.set_key(KeyCode::KeyB, true);
         assert_eq!(
             keyboard.pressed_keys(),
-            &[KeyCode::A, KeyCode::B].iter().copied().collect()
+            &[KeyCode::KeyA, KeyCode::KeyB].iter().copied().collect()
         );
-        keyboard.set_key(KeyCode::A, false);
+        keyboard.set_key(KeyCode::KeyA, false);
         assert_eq!(
             keyboard.pressed_keys(),
-            &[KeyCode::B].iter().copied().collect()
+            &[KeyCode::KeyB].iter().copied().collect()
         );
-        keyboard.set_key(KeyCode::A, false);
+        keyboard.set_key(KeyCode::KeyA, false);
         assert_eq!(
             keyboard.pressed_keys(),
-            &[KeyCode::B].iter().copied().collect()
+            &[KeyCode::KeyB].iter().copied().collect()
         );
-        keyboard.set_key(KeyCode::B, false);
+        keyboard.set_key(KeyCode::KeyB, false);
         assert_eq!(keyboard.pressed_keys(), &[].iter().copied().collect());
     }
 
@@ -505,14 +508,14 @@ mod tests {
             keyboard.active_mods(),
             KeyMods::SHIFT | KeyMods::CTRL | KeyMods::ALT | KeyMods::LOGO
         );
-        keyboard.set_key(KeyCode::LControl, false);
+        keyboard.set_key(KeyCode::ControlLeft, false);
         assert_eq!(
             keyboard.active_mods(),
             KeyMods::SHIFT | KeyMods::ALT | KeyMods::LOGO
         );
-        keyboard.set_key(KeyCode::RAlt, false);
+        keyboard.set_key(KeyCode::AltRight, false);
         assert_eq!(keyboard.active_mods(), KeyMods::SHIFT | KeyMods::LOGO);
-        keyboard.set_key(KeyCode::LWin, false);
+        keyboard.set_key(KeyCode::SuperLeft, false);
         assert_eq!(keyboard.active_mods(), KeyMods::SHIFT);
     }
 
